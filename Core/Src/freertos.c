@@ -199,12 +199,46 @@ void SensorTask(void const *argument)
     }
 }
 
-/* ── ADCS Task 뼈대 ─────────────────────────── */
+/* ── ADCS Task ─────────────────────────── */
 void AdcsTask(void const *argument)
 {
+	float prevYaw = 0.0f;
     for (;;) {
-        /* TODO Day 9: 임계값 초과 / 급격한 각속도 변화 감지 */
-        osDelay(20); // 50Hz
+        //mutex로 g_attitude 읽기
+    	AttitudeData_t snap;
+    	if(xSemaphoreTake(g_attitude_mutex, pdMS_TO_TICKS(10))==pdTRUE){
+    		snap = g_attitude;
+    		xSemaphoreGive(g_attitude_mutex);
+    	}else{
+    		osDelay(50);
+    		continue;
+    	}
+
+    	float dYaw = fabsf(snap.yaw - prevYaw);
+    	if(dYaw > 180.0f) dYaw = 360.0f - dYaw;
+    	prevYaw = snap.yaw;
+
+    	if(fabsf(snap.roll) > 45.0f || fabsf(snap.pitch)>45.0f || dYaw > 4.0f){
+
+    	    if(xSemaphoreTake(g_attitude_mutex, pdMS_TO_TICKS(10))==pdTRUE){
+    	        g_attitude.state = SYS_FAULT;
+    	        g_attitude.faultCount++;
+    	        xSemaphoreGive(g_attitude_mutex);
+    	    }
+
+    		bno055_setup();               // 레지스터 초기화 (동작 모드 설정)
+    		bno055_setOperationModeNDOF(); // NDOF 모드 재진입
+    		osDelay(1000); // 센서 안정화 대기
+
+    	    if(xSemaphoreTake(g_attitude_mutex, pdMS_TO_TICKS(10))==pdTRUE){
+    	        if(g_attitude.faultCount >= 3)
+    	            g_attitude.state = SYS_SAFE_MODE;
+    	        else
+    	            g_attitude.state = SYS_NORMAL;
+    	        xSemaphoreGive(g_attitude_mutex);
+    	    }
+    	}
+        osDelay(20); // 50Hz,20ms
     }
 }
 
