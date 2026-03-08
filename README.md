@@ -157,4 +157,3 @@ Core/
 ## 🧩 관련 프로젝트
 
 - **v1**: [ESP32 + Arduino INS](https://github.com/kbg8146) — 단일 루프 기반 검증 버전
-- **THE SSEN**: LIG Nexen 임베디드 소프트웨어 스쿨 3기 프로젝트
