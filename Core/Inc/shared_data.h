@@ -41,5 +41,5 @@ typedef struct {
 /* ── 외부 공개 변수 ─────────────────────────── */
 extern AttitudeData_t    g_attitude;
 extern SemaphoreHandle_t g_attitude_mutex;
-
+extern volatile float g_distanceGain;
 #endif /* SHARED_DATA_H */
