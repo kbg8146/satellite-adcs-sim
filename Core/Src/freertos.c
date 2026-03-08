@@ -9,8 +9,10 @@
 #include "bno055_stm32.h"
 #include "shared_data.h"
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* USER CODE BEGIN Variables */
@@ -191,6 +193,8 @@ void SensorTask(void const *argument)
             g_attitude.px = px;  g_attitude.py = py;  g_attitude.pz = pz;
             g_attitude.totalDist = totalDist;
             g_attitude.zupt = (gNorm < G_THRESH);
+            g_attitude.ax_f = ax_f;
+            g_attitude.ay_f = ay_f;
             xSemaphoreGive(g_attitude_mutex);
         }
 
@@ -203,6 +207,7 @@ void SensorTask(void const *argument)
 void AdcsTask(void const *argument)
 {
 	float prevYaw = 0.0f;
+	bool firstLoop = true;
     for (;;) {
         //mutex로 g_attitude 읽기
     	AttitudeData_t snap;
@@ -218,7 +223,8 @@ void AdcsTask(void const *argument)
     	if(dYaw > 180.0f) dYaw = 360.0f - dYaw;
     	prevYaw = snap.yaw;
 
-    	if(fabsf(snap.roll) > 45.0f || fabsf(snap.pitch)>45.0f || dYaw > 4.0f){
+    	if(!firstLoop &&
+    		(fabsf(snap.roll) > 45.0f || fabsf(snap.pitch)>45.0f || dYaw > 30.0f)){
 
     	    if(xSemaphoreTake(g_attitude_mutex, pdMS_TO_TICKS(10))==pdTRUE){
     	        g_attitude.state = SYS_FAULT;
@@ -238,6 +244,8 @@ void AdcsTask(void const *argument)
     	        xSemaphoreGive(g_attitude_mutex);
     	    }
     	}
+    	firstLoop = false;
+
         osDelay(20); // 50Hz,20ms
     }
 }
@@ -245,7 +253,6 @@ void AdcsTask(void const *argument)
 /* ── Mission Task ──────────────────────── */
 void MissionTask(void const *argument)
 {
-	int step = 0;
 	float initialYaw = 0.0f;
 	float prevDist = 0.0f;
     for (;;) {
@@ -261,11 +268,11 @@ void MissionTask(void const *argument)
 
     	float totalDist = snap.totalDist * g_distanceGain;
 
-    	if(step==0){
+    	if(snap.missionStep==0){
 
     	}
     	//홀수 -> 전진
-    	else if(step==1||step==3||step==5){
+    	else if(snap.missionStep==1||snap.missionStep==3||snap.missionStep==5){
 
     		//한번 늘어난 거리는 줄어들지 않게
     		if(totalDist<prevDist) totalDist = prevDist;
@@ -275,11 +282,14 @@ void MissionTask(void const *argument)
     		if(totalDist >= 10.0f){
     			prevDist = 0.0f;
     			initialYaw = snap.yaw;
-    			step++;
+    		    if(xSemaphoreTake(g_attitude_mutex, pdMS_TO_TICKS(10))==pdTRUE){
+    		        g_attitude.missionStep++;
+    		        xSemaphoreGive(g_attitude_mutex);
+    		    }
     		}
     	}
     	//짝수 -> 회전
-    	else if(step==2||step==4){
+    	else if(snap.missionStep==2||snap.missionStep==4){
 
     		float yawChange = fabsf(snap.yaw -initialYaw);
     		if(yawChange > 180.0f) yawChange = 360.0f-yawChange;
@@ -288,20 +298,23 @@ void MissionTask(void const *argument)
     			prevDist = 0.0f;
     	    	if(xSemaphoreTake(g_attitude_mutex, pdMS_TO_TICKS(10))==pdTRUE){
     	    		g_attitude.totalDist = 0;
+    	    		g_attitude.missionStep++;
     	    		xSemaphoreGive(g_attitude_mutex);
     	    	}
-    			step++;
     		}
     	}
-    	else if(step==6){
-    		step = 0;
+    	else if(snap.missionStep==6){
+    	    if(xSemaphoreTake(g_attitude_mutex, pdMS_TO_TICKS(10))==pdTRUE){
+    	        g_attitude.missionStep = 0;
+    	        xSemaphoreGive(g_attitude_mutex);
+    	    }
     	}
 
         osDelay(50); // 20Hz
     }
 }
 
-/* ── Telemetry Task 뼈대 ────────────────────── */
+/* ── Telemetry Task ────────────────────── */
 void TelemetryTask(void const *argument)
 {
     for (;;) {
@@ -321,19 +334,51 @@ void TelemetryTask(void const *argument)
         int r = (int)snap.roll;
         int p = (int)snap.pitch;
         int y = (int)snap.yaw;
+        int dist = (int)snap.totalDist;
+        int st   = (int)snap.state;    // 0=NORMAL 1=FAULT 2=SAFE
+        int ms   = snap.missionStep;
+        int axf = (int)(snap.ax_f * 100);  // 소수점 2자리 표현
+        int ayf = (int)(snap.ay_f * 100);
+        int vx  = (int)(snap.vx  * 100);
+        int vy  = (int)(snap.vy  * 100);
         int len = snprintf(buf, sizeof(buf),
-            "R:%d P:%d Y:%d\r\n", r, p, y);
+            "R:%d P:%d Y:%d STEP:%d DIST:%d ST:%d AX:%d AY:%d VX:%d VY:%d\r\n",
+			r, p, y, ms, dist, st, axf, ayf, vx, vy);
         HAL_UART_Transmit(&huart1, (uint8_t*)buf, len, 100);
 
         osDelay(100); // 10Hz
     }
 }
 
-/* ── Command Task 뼈대 ──────────────────────── */
+/* ── Command Task ──────────────────────── */
 void CommandTask(void const *argument)
 {
+    uint8_t cmd;
     for (;;) {
-        /* TODO Day 10: UART 명령 수신 + Gain Factor 런타임 조정 */
-        osDelay(100);
+        // 블로킹 수신 — 명령 올 때까지 여기서 기다림
+        HAL_UART_Receive(&huart1, &cmd, 1, HAL_MAX_DELAY);
+
+        if(cmd == 'S'){
+            // Mutex로 missionStep = 1
+    	    if(xSemaphoreTake(g_attitude_mutex, pdMS_TO_TICKS(10))==pdTRUE){
+    	        g_attitude.missionStep = 1;
+    	        xSemaphoreGive(g_attitude_mutex);
+    	    }
+        }
+        else if(cmd == 'R'){
+            // Mutex로 missionStep = 0, totalDist = 0, faultCount = 0
+    	    if(xSemaphoreTake(g_attitude_mutex, pdMS_TO_TICKS(10))==pdTRUE){
+    	        g_attitude.missionStep = 0;
+    	        g_attitude.totalDist = 0;
+    	        g_attitude.faultCount = 0;
+    	        xSemaphoreGive(g_attitude_mutex);
+    	    }
+        }
+        else if(cmd == 'G'){
+            // 숫자 문자열 추가 수신 후 g_distanceGain 업데이트
+            char buf[8] = {0};
+            HAL_UART_Receive(&huart1, (uint8_t*)buf, 7, 1000);
+            g_distanceGain = (float)atof(buf);
+        }
     }
 }

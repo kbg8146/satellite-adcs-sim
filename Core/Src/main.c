@@ -25,6 +25,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -285,12 +286,13 @@ static void MX_I2C1_Init(void)
   // 1. I2C 버스 복구 (SCL 9번 클록 생성) - 라인 잠김 방지
   GPIO_InitTypeDef GPIO_InitStruct_Rec = {0};
   __HAL_RCC_GPIOB_CLK_ENABLE();
-  GPIO_InitStruct_Rec.Pin = GPIO_PIN_6;
+  GPIO_InitStruct_Rec.Pin = GPIO_PIN_6 | GPIO_PIN_7;
   GPIO_InitStruct_Rec.Mode = GPIO_MODE_OUTPUT_OD;
   GPIO_InitStruct_Rec.Pull = GPIO_PULLUP;
   GPIO_InitStruct_Rec.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct_Rec);
 
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
   for(int i = 0; i < 9; i++) {
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
     HAL_Delay(5);
@@ -298,6 +300,10 @@ static void MX_I2C1_Init(void)
     HAL_Delay(5);
   }
   /* USER CODE END I2C1_Init 0 */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+  HAL_Delay(5);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
+  HAL_Delay(5);
 
   hi2c1.Instance = I2C1;
   hi2c1.Init.ClockSpeed = 10000; // 10kHz 저속 모드 (안정성 최우선)

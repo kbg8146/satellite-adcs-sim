@@ -36,6 +36,9 @@ typedef struct {
 
     /* Fault Recovery 재시도 횟수 */
     uint8_t faultCount;
+
+    int missionStep;
+    float ax_f, ay_f;
 } AttitudeData_t;
 
 /* ── 외부 공개 변수 ─────────────────────────── */
