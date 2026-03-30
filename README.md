@@ -15,7 +15,6 @@ ESP32 + Arduino 환경에서 검증한 IMU 기반 INS 항법 알고리즘을
 | UART | USART1 (PA9=TX, 115200bps) |
 | OS | FreeRTOS (CMSIS_V1) |
 | IDE | STM32CubeIDE |
-| 개발 기간 | 12일 |
 
 ---
 
