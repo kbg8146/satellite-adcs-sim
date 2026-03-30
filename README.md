@@ -87,47 +87,52 @@ BNO055 읽기
 
 ## 🔥 트러블슈팅
 
-### 1. I2C Clock Stretching + SDA Bus Lock-up (Day 5)
+### 1. I2C Clock Stretching + SDA Bus Lock-up
 
-| 항목 | 내용 |
-|--------|------|
-| **증상** | 주소 스캔(0x28)은 성공하지만, 데이터 읽기(0xA0)에서 `HAL_TIMEOUT` 무한 발생 |
-| **분석 과정** | ESP32 교차 검증으로 센서 하드웨어 정상 확인 → STM32 I2C 드라이버 문제로 범위 좁힘 |
-| **원인** | BNO055는 연산 중 SCL을 Low로 붙잡는 Clock Stretching 사용. STM32의 `NoStretchMode = ENABLE` 상태에서 이를 '라인 고장'으로 판단하여 통신 차단 |
-| **해결** | ① `NoStretchMode = DISABLE`로 SCL hold 허용 ② 9-Clock Recovery로 SDA 버스 마비 해제 ③ NVIC 우선순위 상향 (FreeRTOS 스케줄링보다 I2C 인터럽트 우선 처리) |
+**증상**: 주소 스캔(0x28)은 성공하지만, 데이터 읽기(0xA0)에서 `HAL_TIMEOUT` 무한 발생
 
-### 2. snprintf float 스택 오버플로우 (Day 6)
+**분석 과정**: ESP32 교차 검증으로 센서 하드웨어 정상 확인 → STM32 I2C 드라이버 문제로 범위 좁힘
 
-| 항목 | 내용 |
-|------|------|
-| **증상** | `òòòòòò` 깨진 문자 반복 출력, R/P/Y 값 비어있음 |
-| **원인** | `nano.specs` 환경에서 `snprintf("%.1f")`의 float printf가 내부적으로 300~500 bytes 스택 추가 사용 → TelemetryTask 스택 오버플로우 |
-| **해결** | float 출력을 정수 캐스팅으로 교체: `int r = (int)snap.roll;` + `snprintf("%d")` |
-| **교훈** | ARM Cortex-M4에서 `%f`는 변수 크기(4B)와 무관하게 IEEE 754 비트 분리 + 소수점 반올림 처리의 로컬 변수가 스택에 수백 bytes 쌓임 |
+**원인**: BNO055는 연산 중 SCL을 Low로 붙잡는 Clock Stretching 사용. STM32의 `NoStretchMode = ENABLE` 상태에서 이를 '라인 고장'으로 판단하여 통신 차단
 
-### 3. 알고리즘 이식 순서 오류 (Day 7)
+**해결**:
+- `NoStretchMode = DISABLE`로 SCL hold 허용
+- 9-Clock Recovery로 SDA 버스 마비 해제
+- NVIC 우선순위 상향 (FreeRTOS 스케줄링보다 I2C 인터럽트 우선 처리)
 
-| 항목 | 내용 |
-|------|------|
-| **증상** | LPF가 Body 좌표계 데이터에 적용되어 좌표 변환 후 필터링 효과 왜곡 |
-| **원인** | LPF를 bodyToENU 변환 전에 배치하는 코드 순서 실수 |
-| **해결** | 올바른 순서 확립: `bodyToENU → LPF → Dead Band → ZUPT → 적분 → Mutex write` |
+### 2. snprintf float 스택 오버플로우
 
-### 4. MissionTask 지역변수 → 공유 구조체 재설계 (Day 10)
+**증상**: `òòòòòò` 깨진 문자 반복 출력, R/P/Y 값 비어있음
 
-| 항목 | 내용 |
-|------|------|
-| **증상** | Command Task에서 미션 시작/리셋이 불가능 |
-| **원인** | `step`이 MissionTask 지역변수여서 다른 Task에서 접근 불가 |
-| **해결** | `shared_data.h`에 `missionStep` 필드 추가, Mutex를 통해 Task 간 공유. 읽기는 snap, 쓰기는 Mutex 안에서 g_attitude 직접 수정 |
+**원인**: `nano.specs` 환경에서 `snprintf("%.1f")`의 float printf가 내부적으로 300~500 bytes 스택 추가 사용 → TelemetryTask 스택 오버플로우
 
-### 5. 부팅 시 false FAULT 발생 (Day 9)
+**해결**: float 출력을 정수 캐스팅으로 교체: `int r = (int)snap.roll;` + `snprintf("%d")`
 
-| 항목 | 내용 |
-|------|------|
-| **증상** | 시스템 시작 직후 ADCS가 즉시 FAULT 판정 |
-| **원인** | BNO055 초기 데이터가 불안정한 상태에서 Fault 조건 체크 |
-| **해결** | `firstLoop` 플래그로 최초 N사이클 Fault 판정 skip |
+**교훈**: ARM Cortex-M4에서 `%f`는 변수 크기(4B)와 무관하게 IEEE 754 비트 분리 + 소수점 반올림 처리의 로컬 변수가 스택에 수백 bytes 쌓임
+
+### 3. 알고리즘 이식 순서 오류
+
+**증상**: LPF가 Body 좌표계 데이터에 적용되어 좌표 변환 후 필터링 효과 왜곡
+
+**원인**: LPF를 bodyToENU 변환 전에 배치하는 코드 순서 실수
+
+**해결**: 올바른 순서 확립: `bodyToENU → LPF → Dead Band → ZUPT → 적분 → Mutex write`
+
+### 4. MissionTask 지역변수 → 공유 구조체 재설계
+
+**증상**: Command Task에서 미션 시작/리셋이 불가능
+
+**원인**: `step`이 MissionTask 지역변수여서 다른 Task에서 접근 불가
+
+**해결**: `shared_data.h`에 `missionStep` 필드 추가, Mutex를 통해 Task 간 공유. 읽기는 snap, 쓰기는 Mutex 안에서 g_attitude 직접 수정
+
+### 5. 부팅 시 false FAULT 발생
+
+**증상**: 시스템 시작 직후 ADCS가 즉시 FAULT 판정
+
+**원인**: BNO055 초기 데이터가 불안정한 상태에서 Fault 조건 체크
+
+**해결**: `firstLoop` 플래그로 최초 N사이클 Fault 판정 skip
 
 ---
 
